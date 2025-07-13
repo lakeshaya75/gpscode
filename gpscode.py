@@ -1,12 +1,14 @@
-##########DEPENDENCIES#############
+########## DEPENDENCIES ##########
 
 from dronekit import connect, VehicleMode, LocationGlobalRelative
 import time
 import math
 import argparse
+import can
+import struct
 
 
-#########FUNCTIONS#################
+######### FUNCTIONS #################
 
 def establish_drone_connection():
     parser = argparse.ArgumentParser(description='Drone connection parameters')
@@ -14,7 +16,6 @@ def establish_drone_connection():
     args = parser.parse_args()
 
     conn_str = args.connect
-
     drone = connect(conn_str, baud=57600, wait_ready=True)
 
     return drone
@@ -27,7 +28,7 @@ def compute_compass_heading(dest_coords, current_coords):
     # Calculate angle in radians and convert to degrees
     bearing_deg = math.atan2(delta_lon, delta_lat) * (180 / math.pi)
     if bearing_deg < 0:
-        bearing_deg += 360  # Normalize to 0-360
+        bearing_deg += 360 
 
     # Convert bearing into compass direction
     if 337.5 <= bearing_deg < 360 or 0 <= bearing_deg < 22.5:
@@ -62,9 +63,24 @@ def calculate_haversine_distance(lat_a, lon_a, lat_b, lon_b):
     return earth_radius * c
 
 
-def navigate_to_waypoint(target_waypoint, active_drone):
+def send_position_velocity_via_can(lat, velocity, bus):
+    """
+    Sends current latitude and groundspeed over CAN bus (8 bytes: 2 floats).
+    Matches the structure expected by Arduino in Code 1.
+    """
+    try:
+        data = struct.pack('<ff', lat, velocity)
+        msg = can.Message(arbitration_id=0x100, data=data, is_extended_id=False)
+        bus.send(msg)
+        print(f"Sent via CAN → lat: {lat:.6f}, velocity: {velocity:.2f} m/s")
+    except can.CanError:
+        print("CAN transmission failed.")
+
+
+def navigate_to_waypoint(target_waypoint, active_drone, can_bus):
     while True:
         current_coords = active_drone.location.global_relative_frame
+        groundspeed = active_drone.groundspeed 
 
         if current_coords and current_coords.lat and current_coords.lon:
             heading_info = compute_compass_heading(target_waypoint, current_coords)
@@ -76,7 +92,10 @@ def navigate_to_waypoint(target_waypoint, active_drone):
             print(f"Drone Position: ({current_coords.lat}, {current_coords.lon})")
             print(f"Waypoint: ({target_waypoint.lat}, {target_waypoint.lon})")
             print(f"Heading: {heading_info}")
-            print(f"Remaining Distance: {remaining_distance:.2f} meters\n")
+            print(f"Remaining Distance: {remaining_distance:.2f} meters")
+            print(f"Ground Speed: {groundspeed:.2f} m/s\n")
+
+            send_position_velocity_via_can(current_coords.lat, groundspeed, can_bus)
 
             if remaining_distance < 5:
                 print("Destination reached successfully!")
@@ -88,14 +107,19 @@ def navigate_to_waypoint(target_waypoint, active_drone):
             time.sleep(1)
 
 
-##########MAIN EXECUTION###########
+########## MAIN EXECUTION ###########
 
-final_waypoint = LocationGlobalRelative(47.63195438872842, -122.0527076386417, 2)
+if __name__ == '__main__':
+    # Example waypoint
+    final_waypoint = LocationGlobalRelative(47.63195438872842, -122.0527076386417, 2)
 
-drone_connection = establish_drone_connection()
+    print("Connecting to drone and initializing CAN interface...")
+    can_bus = can.interface.Bus(channel='can0', bustype='socketcan') 
 
-try:
-    print("Beginning navigation to final waypoint...")
-    navigate_to_waypoint(final_waypoint, drone_connection)
-finally:
-    drone_connection.close()
+    drone_connection = establish_drone_connection()
+
+    try:
+        print("Beginning navigation to final waypoint...")
+        navigate_to_waypoint(final_waypoint, drone_connection, can_bus)
+    finally:
+        drone_connection.close()
