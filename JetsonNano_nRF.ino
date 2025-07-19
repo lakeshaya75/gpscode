@@ -1,14 +1,15 @@
 #include <SPI.h>
 #include <RF24.h>
 #include <SD.h>
-#include <CAN.h>  // For Arduino Due built-in CAN controller
+#include <CAN.h>  
 
 /* read location information from Jetson Nano and sends this to another node via nRF module*/
 
-RF24 radio(7, 10);  // CE, CSN
-const byte address[6] = "PLT01"; // Shared address for all nodes
+RF24 radio(7, 10); 
+const byte address[6] = "PLT01"; 
 const int SD_CS = 4;
 
+// TDMA Settings for 3-node platoon
 const uint8_t nodeID = 1;           
 const unsigned long slotTime = 10;  
 const unsigned long cycleTime = 30; 
@@ -29,6 +30,7 @@ void setup() {
   Serial.begin(115200);
   while (!Serial);
 
+  // Init SD card
   if (!SD.begin(SD_CS)) {
     Serial.println("SD init failed");
     while (1);
@@ -38,7 +40,7 @@ void setup() {
     Serial.println("Log file creation failed");
     while (1);
   }
-  logFile.println("Trial,FromID,PayloadSize,Latency_us,Success");
+  logFile.println("Trial,FromID,PayloadSize,Latency,Success");
   logFile.flush();
 
   // Init nRF24
@@ -64,6 +66,7 @@ void loop() {
   unsigned long slotStart = (nodeID - 1) * slotTime;
   unsigned long slotEnd = nodeID * slotTime;
 
+  //Listen for incoming nRF packets
   while (radio.available()) {
     PlatoonPacket rxPacket;
     unsigned long rxStart = micros();
@@ -77,10 +80,11 @@ void loop() {
     logFile.print(sizeof(rxPacket));
     logFile.print(",");
     logFile.print(latency);
-    logFile.println(",1"); // success
+    logFile.println(",1"); 
     logFile.flush();
   }
 
+  //Transmit during assigned slot
   if (inCycle >= slotStart && inCycle < slotEnd && trial <= numTrials) {
     float pos = 0.0, vel = 0.0;
     bool canDataAvailable = false;
@@ -116,13 +120,13 @@ void loop() {
         logFile.print(sizeof(packet));
         logFile.print(",");
         logFile.print("NA");
-        logFile.println(",0"); // failure
+        logFile.println(",0"); 
         logFile.flush();
       }
 
       trial++;
     }
 
-    delay(slotTime - 2); // stay within slot
+    delay(slotTime - 2); 
   }
 }
